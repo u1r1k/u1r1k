@@ -1,139 +1,225 @@
-import os
-import json
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, CallbackQueryHandler, filters
-)
-import yt_dlp
+import subprocess
+import sys
 
-# Твой токен и админ ID
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Проверяем и устанавливаем нужные библиотеки
+try:
+    import telegram
+    import yt_dlp
+    import flask
+except ImportError:
+    print("Устанавливаю нужные библиотеки...")
+    install("python-telegram-bot")
+    install("yt-dlp")
+    install("flask")
+    print("Библиотеки установлены. Перезапустите скрипт.")
+    sys.exit()
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+import json, os, yt_dlp, asyncio
+from threading import Thread
+from flask import Flask
+
 TOKEN = "6409245799:AAECfJLSS5-eeI-SOga9l7k4lmMn84RdG2g"
 ADMIN_ID = 1979411532
-SUBSCRIBERS_FILE = 'subscribers.json'
+ADVERTISEMENT = "\n\n🎧 Музыку ищи тут: https://t.me/music6383"
 
-# Рекламная ссылка
-AD_LINK = "\n\n🔥 Музыка тут: https://t.me/music6383"
+LANGUAGES = {
+    "ru": {
+        "start": "👋 Привет! Отправь мне название трека, и я помогу найти музыку.",
+        "language": "🇷🇺 Язык переключён на русский.",
+        "results": "🔎 Вот что я нашёл. Выбери трек:",
+        "no_results": "❌ Ничего не найдено.",
+        "sending": "🎶 Отправляю...",
+        "sent_all": "✅ Сообщение отправлено всем подписчикам.",
+        "not_admin": "⛔ Команда только для администратора.",
+        "enter_message": "✏️ Введите сообщение для рассылки:"
+    },
+    "en": {
+        "start": "👋 Hello! Send me a track name and I'll help you find music.",
+        "language": "🇬🇧 Language switched to English.",
+        "results": "🔎 Here are the results. Choose a track:",
+        "no_results": "❌ Nothing found.",
+        "sending": "🎶 Sending...",
+        "sent_all": "✅ Message sent to all subscribers.",
+        "not_admin": "⛔ Command only for admin.",
+        "enter_message": "✏️ Enter the message to broadcast:"
+    }
+}
 
-# Логирование
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+USERS_FILE = "users.json"
+if not os.path.exists(USERS_FILE):
+    with open(USERS_FILE, "w") as f:
+        json.dump({}, f)
 
-# Хранение подписчиков
-def load_subscribers():
-    if os.path.exists(SUBSCRIBERS_FILE):
-        with open(SUBSCRIBERS_FILE, 'r') as f:
-            return set(json.load(f))
-    return set()
+def load_users():
+    with open(USERS_FILE) as f:
+        return json.load(f)
 
-def save_subscribers(subscribers):
-    with open(SUBSCRIBERS_FILE, 'w') as f:
-        json.dump(list(subscribers), f)
+def save_users(data):
+    with open(USERS_FILE, "w") as f:
+        json.dump(data, f)
 
-subscribers = load_subscribers()
+def add_user(user_id):
+    data = load_users()
+    if str(user_id) not in data:
+        data[str(user_id)] = {"lang": "ru"}
+        save_users(data)
 
-# Команда /start
+def get_lang(user_id):
+    data = load_users()
+    return data.get(str(user_id), {}).get("lang", "ru")
+
+def set_lang(user_id, lang):
+    data = load_users()
+    if str(user_id) in data:
+        data[str(user_id)]["lang"] = lang
+        save_users(data)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in subscribers:
-        subscribers.add(user_id)
-        save_subscribers(subscribers)
-
-    keyboard = [
-        [InlineKeyboardButton("🌐 Язык", callback_data='lang')],
-    ]
+    uid = update.effective_user.id
+    add_user(uid)
+    lang = get_lang(uid)
+    keyboard = [[InlineKeyboardButton("🌐 Язык", callback_data="change_lang")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(LANGUAGES[lang]["start"], reply_markup=reply_markup)
 
-    await update.message.reply_text(
-        "👋 Привет! Отправь мне название трека, и я найду его для тебя.",
-        reply_markup=reply_markup
-    )
-
-# Смена языка
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("🌍 Функция смены языка в разработке.")
+    uid = query.from_user.id
+    lang = get_lang(uid)
+    if query.data == "change_lang":
+        new_lang = "en" if lang == "ru" else "ru"
+        set_lang(uid, new_lang)
+        await query.edit_message_text(text=LANGUAGES[new_lang]["language"])
 
-# Поиск и отправка трека
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
-
-    if user_id not in subscribers:
-        subscribers.add(user_id)
-        save_subscribers(subscribers)
-
-    await update.message.reply_text("🔎 Ищу трек...")
+async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text
+    uid = update.effective_user.id
+    add_user(uid)
+    lang = get_lang(uid)
 
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'noplaylist': True,
         'quiet': True,
-        'default_search': 'ytsearch',
-        'outtmpl': 'music.%(ext)s',
+        'extract_flat': True,
+        'force_generic_extractor': True,
+        'default_search': 'ytsearch5',
+        'skip_download': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if "entries" not in info or not info["entries"]:
+                await update.message.reply_text(LANGUAGES[lang]["no_results"])
+                return
+            results = info["entries"]
+            buttons = [[InlineKeyboardButton(entry["title"][:50], callback_data=f"play_{entry['url']}")] for entry in results]
+            reply_markup = InlineKeyboardMarkup(buttons)
+            await update.message.reply_text(LANGUAGES[lang]["results"], reply_markup=reply_markup)
+    except Exception as e:
+        print(e)
+        await update.message.reply_text("⚠️ Ошибка при поиске.")
+
+async def handle_sendall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(LANGUAGES[get_lang(update.effective_user.id)]["not_admin"])
+        return
+    context.user_data["sendall"] = True
+    await update.message.reply_text(LANGUAGES[get_lang(update.effective_user.id)]["enter_message"])
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if context.user_data.get("sendall"):
+        context.user_data["sendall"] = False
+        msg = update.message.text
+        users = load_users()
+        sent = 0
+        for user_id in users:
+            try:
+                await context.bot.send_message(chat_id=int(user_id), text=msg)
+                sent += 1
+                await asyncio.sleep(0.1)
+            except:
+                continue
+        await update.message.reply_text(f"✅ Отправлено: {sent}")
+    else:
+        await message(update, context)
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(LANGUAGES[get_lang(update.effective_user.id)]["not_admin"])
+        return
+    count = len(load_users())
+    await update.message.reply_text(f"👥 Подписчиков: {count}")
+
+async def play_track(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    url = query.data.replace("play_", "")
+    uid = query.from_user.id
+    lang = get_lang(uid)
+
+    await query.edit_message_text(LANGUAGES[lang]["sending"])
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': 'song.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'quiet': True,
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(text, download=True)
-            title = info.get('title', 'Аудио')
-            file_path = ydl.prepare_filename(info).replace('.webm', '.mp3').replace('.m4a', '.mp3')
-
-        with open(file_path, 'rb') as audio:
-            await update.message.reply_audio(audio, title=title, caption=AD_LINK)
-        os.remove(file_path)
-
+            info = ydl.extract_info(url, download=True)
+            title = info.get("title", "track")
+            file_path = "song.mp3"
+            caption = f"{title}{ADVERTISEMENT}"
+            await context.bot.send_audio(chat_id=uid, audio=open(file_path, 'rb'), title=title, caption=caption)
+            os.remove(file_path)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text("❌ Не удалось найти трек.")
+        print(e)
+        await context.bot.send_message(chat_id=uid, text="⚠️ Ошибка при загрузке трека.")
 
-# Команда /sendall — рассылка
-async def sendall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Только админ может использовать эту команду.")
-        return
+# ---- keep_alive в этом же файле ----
+from flask import Flask
+from threading import Thread
 
-    msg = update.message.text.split(maxsplit=1)
-    if len(msg) < 2:
-        await update.message.reply_text("⚠️ Используй: /sendall ТЕКСТ")
-        return
+app = Flask('')
 
-    text = msg[1]
-    sent = 0
-    for user_id in list(subscribers):
-        try:
-            await context.bot.send_message(chat_id=user_id, text=text)
-            sent += 1
-        except Exception as e:
-            logger.warning(f"Не удалось отправить пользователю {user_id}: {e}")
+@app.route('/')
+def home():
+    return "✅ Бот работает 24/7"
 
-    await update.message.reply_text(f"✅ Отправлено {sent} пользователям.")
+def run():
+    app.run(host='0.0.0.0', port=8080)
 
-# /stats
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id == ADMIN_ID:
-        await update.message.reply_text(f"👥 Подписчиков: {len(subscribers)}")
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
-# Запуск бота
-async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+# ------------------------------
+
+def main():
+    keep_alive()
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("sendall", sendall))
+    app.add_handler(CommandHandler("sendall", handle_sendall))
     app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(button, pattern="change_lang"))
+    app.add_handler(CallbackQueryHandler(play_track, pattern="play_"))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
 
-    logger.info("Бот запущен...")
-    await app.run_polling()
+    print("🤖 Бот запущен")
+    app.run_polling()
 
-if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+if __name__ == "__main__":
+    main()
