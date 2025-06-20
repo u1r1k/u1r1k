@@ -1,15 +1,47 @@
-from flask import Flask
-from threading import Thread
+import os
+import logging
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from keep_alive import keep_alive
 
-app = Flask('')
+# Включаем логирование
+logging.basicConfig(level=logging.INFO)
 
-@app.route('/')
-def home():
-    return "✅ Бот работает 24/7"
+TOKEN = "8081156284:AAHFdy3SIsPbtPnWz4yVHF97AF3oD1AhmCs"  # ← твой токен
 
-def run():
-    app.run(host='0.0.0.0', port=8080)
+# Меню-кнопки
+keyboard = [["/help", "/about"], ["/ping"]]
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+# Команды
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Привет! Я Telegram-бот, работающий 24/7.\nВыбери команду ниже:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🛠 Команды:\n/start — Запуск\n/help — Помощь\n/ping — Проверка работы\n/about — О боте")
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 Я работаю 24/7 благодаря Flask-серверу и UptimeRobot!")
+
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Я жив!")
+
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❓ Неизвестная команда. Используй кнопки ниже.")
+
+# Запуск бота
+if __name__ == "__main__":
+    keep_alive()  # Запускаем веб-сервер для UptimeRobot
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("about", about))
+    app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+    print("✅ Бот запущен и работает 24/7...")
+    app.run_polling()
