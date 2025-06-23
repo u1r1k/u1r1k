@@ -1,1 +1,3 @@
-pip install --upgrade python-telegram-bot yt-dlp flask
+python-telegram-bot==20.6
+yt-dlp
+flask
