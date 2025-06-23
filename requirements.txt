@@ -1,0 +1,1 @@
+pip install --upgrade python-telegram-bot yt-dlp flask
