@@ -801,11 +801,11 @@ async def main():
     bot = MusicTelegramBot()
     await bot.run_with_recovery()
 
-- name: Run tests
-  run: |
-    pytest || true
     except KeyboardInterrupt:
         print("\n🛑 Музыкальный бот остановлен пользователем")
     except Exception as e:
         print(f"💀 Фатальная ошибка: {e}")
         sys.exit(1)
+        - name: Run tests
+  run: |
+    pytest || true
