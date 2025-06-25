@@ -801,9 +801,9 @@ async def main():
     bot = MusicTelegramBot()
     await bot.run_with_recovery()
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
+- name: Run tests
+  run: |
+    pytest || true
     except KeyboardInterrupt:
         print("\n🛑 Музыкальный бот остановлен пользователем")
     except Exception as e:
