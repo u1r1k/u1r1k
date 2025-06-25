@@ -1,3 +1,16 @@
+import os
+import logging
+import asyncio
+# другие импорты...
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Далее остальной код
 #!/usr/bin/env python3
 """
 Мощный музыкальный Telegram бот с системой непрерывной работы 24/7
